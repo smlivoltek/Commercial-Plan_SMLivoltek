@@ -146,11 +146,55 @@ function renderExecutivo(){
     <div class="card"><h3>Pedidos por Status (valor R$)</h3>
         <canvas id="chartStatus" style="max-height:280px"></canvas>
     </div>
+    <div class="card"><h3>Diretoria → Vendedor (clique na diretoria pra abrir)</h3>
+        <div id="tabelaDrillWrap"></div>
+    </div>
     <div class="placeholder-card">
         <div class="ico-grande">📋</div>
         <h3>Comparativo Mensal, Forecast e Funil Comercial</h3>
         <p>Dependem do Plano Comercial e Contratos — ainda sem fonte definida. Assim que tiver o CSV, eu ligo esses gráficos.</p>
     </div>`;
+}
+
+function renderDrillDiretoriaVendedor(){
+    const el = document.getElementById('tabelaDrillWrap');
+    if (!el) return;
+
+    const porDiretoria = {};
+    todosPedidos.forEach(p => {
+        const d = p.diretoria || 'Não mapeado';
+        porDiretoria[d] = porDiretoria[d] || { pedidos:0, faturado:0, vendedores:{} };
+        porDiretoria[d].pedidos += (p.valor||0);
+        if (p.status === 'ENVIADO PARA FATURAMENTO (PD)') porDiretoria[d].faturado += (p.valor||0);
+
+        const v = p.kam || 'Não informado';
+        porDiretoria[d].vendedores[v] = porDiretoria[d].vendedores[v] || { pedidos:0, faturado:0 };
+        porDiretoria[d].vendedores[v].pedidos += (p.valor||0);
+        if (p.status === 'ENVIADO PARA FATURAMENTO (PD)') porDiretoria[d].vendedores[v].faturado += (p.valor||0);
+    });
+
+    const diretorias = Object.entries(porDiretoria).sort((a,b) => b[1].pedidos - a[1].pedidos);
+    let html = '<div class="table-wrap"><table><tr><th></th><th>Directorate</th><th>Orders (value)</th><th>Invoiced (value)</th></tr>';
+    diretorias.forEach(([dir, d], idx) => {
+        html += `<tr class="linha-diretoria" style="cursor:pointer" onclick="toggleDrill(${idx})">
+            <td>▸</td><td><strong>${dir}</strong></td><td>${fmtR$(d.pedidos)}</td><td>${fmtR$(d.faturado)}</td>
+        </tr>`;
+        const vendedores = Object.entries(d.vendedores).sort((a,b) => b[1].pedidos - a[1].pedidos);
+        html += `<tr id="drill_${idx}" style="display:none"><td colspan="4" style="padding:0">
+            <table style="width:100%;background:#fafafa"><tr>
+                <th style="padding-left:32px">Salesperson</th><th>Orders (value)</th><th>Invoiced (value)</th></tr>`;
+        vendedores.forEach(([v, d2]) => {
+            html += `<tr><td style="padding-left:32px">${v}</td><td>${fmtR$(d2.pedidos)}</td><td>${fmtR$(d2.faturado)}</td></tr>`;
+        });
+        html += `</table></td></tr>`;
+    });
+    html += '</table></div>';
+    el.innerHTML = html;
+}
+
+function toggleDrill(idx){
+    const row = document.getElementById('drill_'+idx);
+    if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
 }
 
 function desenharChartExecutivo(){
@@ -371,7 +415,7 @@ irPara = function(tabId){
         }
         renderTabelaPedidos();
     }
-    if (tabId === 'executivo' && todosPedidos.length) setTimeout(desenharChartExecutivo, 50);
+    if (tabId === 'executivo' && todosPedidos.length) setTimeout(() => { desenharChartExecutivo(); renderDrillDiretoriaVendedor(); }, 50);
     if (tabId === 'faturamento' && todosPedidos.length) setTimeout(renderTabelaFaturamento, 50);
 };
 
