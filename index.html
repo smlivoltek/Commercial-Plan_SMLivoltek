@@ -77,7 +77,7 @@ tr:hover{background:#fafafa}
 <script>
 const TABS = [
     { id:'executivo', ico:'📊', label:'Dashboard Executivo', ativo:true },
-    { id:'plano', ico:'📋', label:'Plano Comercial', ativo:false },
+    { id:'plano', ico:'📋', label:'Plano Comercial', ativo:true },
     { id:'contratos', ico:'📄', label:'Contratos', ativo:false },
     { id:'pedidos', ico:'📦', label:'Pedidos', ativo:true },
     { id:'faturamento', ico:'💵', label:'Faturamento', ativo:true },
@@ -110,6 +110,7 @@ function irPara(tabId){
     if (tabId === 'executivo') root.innerHTML = renderExecutivo();
     else if (tabId === 'pedidos') root.innerHTML = renderPedidos();
     else if (tabId === 'faturamento') root.innerHTML = renderFaturamento();
+    else if (tabId === 'plano') root.innerHTML = renderPlano();
     else root.innerHTML = renderPlaceholder(tab.label);
 }
 
@@ -388,6 +389,110 @@ function renderTabelaFaturamento(){
     document.getElementById('tabelaFatWrap').innerHTML = html;
 }
 
+// ══════════════════════════════════════════════════════════════
+// PLANO COMERCIAL — Backlog (pedidos faturados, dado real via pedidos.csv),
+// Estoque (puxado ao vivo do repositório smlivoltek/livoltek, público),
+// Big Chances (sem fonte ainda — placeholder).
+// ══════════════════════════════════════════════════════════════
+let estoqueResumo = null; // {atual, reservado, livre}
+
+async function carregarEstoqueResumo(){
+    if (estoqueResumo) return estoqueResumo;
+    try {
+        const [txtE, txtR] = await Promise.all([
+            fetch('https://raw.githubusercontent.com/smlivoltek/livoltek/main/data/ESTOQUE.csv').then(r => r.arrayBuffer()),
+            fetch('https://raw.githubusercontent.com/smlivoltek/livoltek/main/data/RESERVAS.csv').then(r => r.arrayBuffer()),
+        ]);
+        const decode = buf => new TextDecoder('windows-1252').decode(buf);
+        const linhasE = decode(txtE).trim().split('\n').slice(1).map(l => l.split(';'));
+        const linhasR = decode(txtR).trim().split('\n').slice(1).map(l => l.split(';'));
+
+        const atual = linhasE.reduce((a,r) => a + (parseFloat(r[7])||0), 0);
+        const disponivelTOTVS = linhasE.reduce((a,r) => a + (parseFloat(r[9])||0), 0);
+        const reservado = linhasR.filter(r => r[3] && !r[7]).reduce((a,r) => a + (parseFloat(r[6])||0), 0);
+
+        estoqueResumo = { atual, reservado, livre: disponivelTOTVS - reservado };
+    } catch (e) {
+        console.warn('⚠ Não foi possível carregar o resumo de Estoque (repositório livoltek):', e.message);
+        estoqueResumo = null;
+    }
+    return estoqueResumo;
+}
+
+function renderPlano(){
+    if (todosPedidos.length === 0) return '<div class="loading">⏳ Loading pedidos.csv...</div>';
+
+    const backlog = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)');
+    const backlogQtd = backlog.length;
+    const backlogValor = backlog.reduce((a,p) => a + (p.valor||0), 0);
+
+    return `
+    <div class="kpi-grid">
+        <div class="kpi-card"><h4>Backlog (Qtd)</h4><div class="valor">${fmt(backlogQtd)}</div></div>
+        <div class="kpi-card verde"><h4>Backlog (Valor)</h4><div class="valor">${fmtR$(backlogValor)}</div></div>
+        <div class="kpi-card vazio"><h4>Big Chances (Qtd)</h4><div class="valor vazio">Sem dados</div></div>
+        <div class="kpi-card vazio"><h4>Big Chances (Valor)</h4><div class="valor vazio">Sem dados</div></div>
+        <div class="kpi-card" id="kpiEstoqueAtual"><h4>Estoque Atual</h4><div class="valor">Carregando...</div></div>
+        <div class="kpi-card" id="kpiEstoqueReservado"><h4>Estoque Reservado</h4><div class="valor">Carregando...</div></div>
+        <div class="kpi-card verde" id="kpiEstoqueLivre"><h4>Estoque Livre</h4><div class="valor">Carregando...</div></div>
+        <div class="kpi-card" id="kpiCobertura"><h4>Cobertura</h4><div class="valor">Carregando...</div></div>
+    </div>
+    <div class="card"><h3>Comparativo Mensal — Backlog (Estoque e Big Chances entram quando tiverem fonte)</h3>
+        <canvas id="chartPlanoMes" style="max-height:280px"></canvas>
+    </div>
+    <div class="card"><h3>Top 10 Clientes (Backlog)</h3>
+        <div id="tabelaTopClientes"></div>
+    </div>
+    <div class="placeholder-card">
+        <div class="ico-grande">🇨🇳</div>
+        <h3>Big Chances (aprovação/importação China)</h3>
+        <p>Preciso de uma fonte de dados pra isso — planilha ou CSV com Produto, Cliente, ETA, Quantidade, Valor, Status. Assim que definir, eu ligo os KPIs e o funil Backlog → Big Chance → Estoque → Faturamento.</p>
+    </div>`;
+}
+
+async function renderizarPlanoAsync(){
+    const backlog = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)');
+
+    const est = await carregarEstoqueResumo();
+    if (est) {
+        document.getElementById('kpiEstoqueAtual').querySelector('.valor').textContent = fmt(est.atual);
+        document.getElementById('kpiEstoqueReservado').querySelector('.valor').textContent = fmt(est.reservado);
+        document.getElementById('kpiEstoqueLivre').querySelector('.valor').textContent = fmt(est.livre);
+        const cobertura = est.atual > 0 ? ((est.livre / est.atual) * 100).toFixed(0) + '%' : '—';
+        document.getElementById('kpiCobertura').querySelector('.valor').textContent = cobertura;
+    } else {
+        ['kpiEstoqueAtual','kpiEstoqueReservado','kpiEstoqueLivre','kpiCobertura'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.querySelector('.valor').textContent = 'Erro ao carregar';
+        });
+    }
+
+    const porMes = {};
+    NOMES_MES.forEach(m => porMes[m] = 0);
+    backlog.forEach(p => { const m = mesDoEnvio(p.dataEnvio); if (m) porMes[NOMES_MES[m-1]] += (p.valor||0); });
+    const ctx = document.getElementById('chartPlanoMes');
+    if (ctx){
+        if (window.chartPlanoMesInstance) window.chartPlanoMesInstance.destroy();
+        window.chartPlanoMesInstance = new Chart(ctx, {
+            type:'bar',
+            data:{ labels:Object.keys(porMes), datasets:[{ label:'Backlog', data:Object.values(porMes), backgroundColor:'#2563eb', borderRadius:6 }] },
+            options:{ responsive:true, maintainAspectRatio:true, plugins:{legend:{position:'bottom'},
+                tooltip:{callbacks:{label:(item)=>fmtR$(item.parsed.y)}}}, scales:{y:{ticks:{callback:(v)=>fmtR$(v)}}} }
+        });
+    }
+
+    const porCliente = {};
+    backlog.forEach(p => { const c = p.cliente||'Not informed'; porCliente[c] = (porCliente[c]||0)+(p.valor||0); });
+    const top10 = Object.entries(porCliente).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const elTop = document.getElementById('tabelaTopClientes');
+    if (elTop){
+        let html = '<div class="table-wrap"><table><tr><th>Client</th><th>Backlog Value</th></tr>';
+        top10.forEach(([c,v]) => { html += `<tr><td>${c}</td><td>${fmtR$(v)}</td></tr>`; });
+        html += '</table></div>';
+        elTop.innerHTML = top10.length ? html : '<div class="empty">No records.</div>';
+    }
+}
+
 async function init(){
     buildNav();
     irPara('executivo');
@@ -417,6 +522,7 @@ irPara = function(tabId){
     }
     if (tabId === 'executivo' && todosPedidos.length) setTimeout(() => { desenharChartExecutivo(); renderDrillDiretoriaVendedor(); }, 50);
     if (tabId === 'faturamento' && todosPedidos.length) setTimeout(renderTabelaFaturamento, 50);
+    if (tabId === 'plano' && todosPedidos.length) setTimeout(renderizarPlanoAsync, 50);
 };
 
 document.addEventListener('DOMContentLoaded', init);
