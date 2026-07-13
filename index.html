@@ -92,6 +92,7 @@ const TABS = [
 let activeTab = 'executivo';
 let todosPedidos = [];
 let avisoValorInconsistente = [];
+let dadosFaturados = { itens:[], pedidos:[] };
 
 function buildNav(){
     document.getElementById('navMenu').innerHTML = TABS.map(tab => `
@@ -269,25 +270,12 @@ function anoDoEnvio(dataEnvioStr){
 const NOMES_MES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function renderFaturamento(){
-    if (todosPedidos.length === 0) return '<div class="loading">⏳ Loading pedidos.csv...</div>';
-    const faturados = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)');
-    if (faturados.length === 0) return '<div class="empty">No invoiced orders found in pedidos.csv yet.</div>';
+    if (dadosFaturados.pedidos.length === 0) return '<div class="loading">⏳ Loading Faturados.csv... (se continuar carregando, o arquivo pode não estar no repositório ainda)</div>';
 
-    let aviso = '';
-    if (avisoValorInconsistente && avisoValorInconsistente.length){
-        aviso = `<div class="placeholder-card" style="border-color:#dc2626;text-align:left;padding:16px 20px;margin-bottom:16px">
-            <strong style="color:#dc2626">⚠ Atenção:</strong> ${avisoValorInconsistente.length} pedido(s) têm valor diferente entre linhas do CSV
-            (ex: ${avisoValorInconsistente.slice(0,5).join(', ')}). Isso pode significar que a coluna de valor é por
-            <em>produto</em>, não por <em>pedido total</em> — o que faria os totais abaixo ficarem menores do que o real.
-            Confirma comigo o nome exato da coluna pra eu ajustar se precisar somar em vez de pegar só a 1ª linha.
-        </div>`;
-    }
-
-    const diretorias = window.__diretoriasCache || [];
-    const vendedores = window.__vendedoresCache || [];
+    const diretorias = [...new Set(dadosFaturados.pedidos.map(p=>p.diretoria).filter(Boolean))].sort();
+    const vendedores = [...new Set(dadosFaturados.pedidos.map(p=>p.seller).filter(Boolean))].sort();
 
     return `
-    ${aviso}
     <div class="filters">
         <select id="fatAno" onchange="renderTabelaFaturamento()"></select>
         <select id="fatMes" onchange="renderTabelaFaturamento()">
@@ -306,6 +294,7 @@ function renderFaturamento(){
     <div class="kpi-grid" id="fatKpis"></div>
     <div class="card"><h3>Invoiced Value by Month (selected filters)</h3><canvas id="chartFatMes" style="max-height:280px"></canvas></div>
     <div class="card"><h3>Invoiced Value by Directorate</h3><canvas id="chartFatDir" style="max-height:280px"></canvas></div>
+    <div class="card"><h3>Top 10 Products (Qty invoiced)</h3><div id="tabelaProdutoWrap"></div></div>
     <div class="card"><h3>Invoiced Value by Client</h3><div id="tabelaClienteWrap"></div></div>
     <div class="card"><h3>Order-level Records</h3><div id="tabelaFatWrap"></div></div>`;
 }
@@ -313,7 +302,7 @@ function renderFaturamento(){
 function popularFiltroAno(){
     const sel = document.getElementById('fatAno');
     if (!sel || sel.options.length) return;
-    const anos = [...new Set(todosPedidos.map(p=>anoDoEnvio(p.dataEnvio)).filter(Boolean))].sort((a,b)=>b-a);
+    const anos = [...new Set(dadosFaturados.pedidos.map(p=>p.ano).filter(Boolean))].sort((a,b)=>b-a);
     sel.innerHTML = anos.map(a=>`<option value="${a}">${a}</option>`).join('');
 }
 
@@ -324,10 +313,10 @@ function renderTabelaFaturamento(){
     const dir = document.getElementById('fatDiretoria')?.value || '';
     const vend = document.getElementById('fatVendedor')?.value || '';
 
-    let faturados = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)' && anoDoEnvio(p.dataEnvio) === ano);
-    if (mes) faturados = faturados.filter(p => mesDoEnvio(p.dataEnvio) === Number(mes));
+    let faturados = dadosFaturados.pedidos.filter(p => p.ano === ano);
+    if (mes) faturados = faturados.filter(p => p.mes === Number(mes));
     if (dir) faturados = faturados.filter(p => p.diretoria === dir);
-    if (vend) faturados = faturados.filter(p => p.kam === vend);
+    if (vend) faturados = faturados.filter(p => p.seller === vend);
 
     const valorTotal = faturados.reduce((a,p)=>a+(p.valor||0),0);
     const modo = mes ? `${NOMES_MES[mes-1]}/${ano}` : `Accumulated ${ano}`;
@@ -337,13 +326,10 @@ function renderTabelaFaturamento(){
         <div class="kpi-card"><h4>Orders</h4><div class="valor">${fmt(faturados.length)}</div></div>
         <div class="kpi-card laranja"><h4>Avg. Ticket</h4><div class="valor">${fmtR$(faturados.length ? valorTotal/faturados.length : 0)}</div></div>`;
 
-    // Gráfico mensal — sempre mostra os 12 meses do ano selecionado (com ou sem filtro de mês),
-    // pra você enxergar Junho no contexto do ano, não isolado.
-    const baseAno = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)' && anoDoEnvio(p.dataEnvio) === ano
-        && (!dir || p.diretoria===dir) && (!vend || p.kam===vend));
+    const baseAno = dadosFaturados.pedidos.filter(p => p.ano===ano && (!dir||p.diretoria===dir) && (!vend||p.seller===vend));
     const porMes = {};
     NOMES_MES.forEach(m => porMes[m] = 0);
-    baseAno.forEach(p => { const m = mesDoEnvio(p.dataEnvio); if (m) porMes[NOMES_MES[m-1]] += (p.valor||0); });
+    baseAno.forEach(p => { if (p.mes) porMes[NOMES_MES[p.mes-1]] += (p.valor||0); });
     if (window.chartFatMesInstance) window.chartFatMesInstance.destroy();
     window.chartFatMesInstance = new Chart(document.getElementById('chartFatMes'), {
         type:'bar',
@@ -362,7 +348,23 @@ function renderTabelaFaturamento(){
             tooltip:{callbacks:{label:(item)=>fmtR$(item.parsed.x)}}}, scales:{x:{ticks:{callback:(v)=>fmtR$(v)}}} }
     });
 
-    // Faturamento por cliente (agrupado — resposta direta à pergunta "total por cliente, não por produto")
+    // Top produtos — usa os itens (linha por produto), não os pedidos agregados
+    const posFiltrados = new Set(faturados.map(p=>p.po));
+    const itensFiltrados = dadosFaturados.itens.filter(it => posFiltrados.has(it.po));
+    const porProduto = {};
+    itensFiltrados.forEach(it => {
+        const k = it.produto || it.codigo || 'Not informed';
+        porProduto[k] = porProduto[k] || { qtd:0, valor:0 };
+        porProduto[k].qtd += it.qtd;
+        porProduto[k].valor += it.valor;
+    });
+    const topProdutos = Object.entries(porProduto).sort((a,b)=>b[1].qtd-a[1].qtd).slice(0,10);
+    let htmlProd = '<div class="table-wrap"><table><tr><th>Product</th><th>Qty</th><th>Value</th></tr>';
+    topProdutos.forEach(([p,d]) => { htmlProd += `<tr><td>${p}</td><td>${fmt(d.qtd)}</td><td>${fmtR$(d.valor)}</td></tr>`; });
+    htmlProd += '</table></div>';
+    document.getElementById('tabelaProdutoWrap').innerHTML = topProdutos.length ? htmlProd : '<div class="empty">No records.</div>';
+
+    // Faturamento por cliente
     const porCliente = {};
     faturados.forEach(p => {
         const c = p.cliente || 'Not informed';
@@ -381,9 +383,9 @@ function renderTabelaFaturamento(){
     // Detalhe por pedido
     let html = '<div class="table-wrap"><table><tr>' +
         ['Directorate','Salesperson','Order #','Client','Value','Invoice Date'].map(h=>`<th>${h}</th>`).join('') + '</tr>';
-    [...faturados].sort((a,b) => new Date(anoDoEnvio(b.dataEnvio), mesDoEnvio(b.dataEnvio)-1) - new Date(anoDoEnvio(a.dataEnvio), mesDoEnvio(a.dataEnvio)-1))
+    [...faturados].sort((a,b) => new Date(b.ano, b.mes-1) - new Date(a.ano, a.mes-1))
         .forEach(p => {
-            html += `<tr><td>${p.diretoria||'-'}</td><td>${p.kam||'-'}</td><td><strong>${p.po}</strong></td><td>${p.cliente||'-'}</td><td>${fmtR$(p.valor)}</td><td>${p.dataEnvio||'-'}</td></tr>`;
+            html += `<tr><td>${p.diretoria||'-'}</td><td>${p.seller||'-'}</td><td><strong>${p.po}</strong></td><td>${p.cliente||'-'}</td><td>${fmtR$(p.valor)}</td><td>${p.dataEmissao||'-'}</td></tr>`;
         });
     html += '</table></div>';
     document.getElementById('tabelaFatWrap').innerHTML = html;
@@ -420,9 +422,9 @@ async function carregarEstoqueResumo(){
 }
 
 function renderPlano(){
-    if (todosPedidos.length === 0) return '<div class="loading">⏳ Loading pedidos.csv...</div>';
+    if (dadosFaturados.pedidos.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
 
-    const backlog = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)');
+    const backlog = dadosFaturados.pedidos;
     const backlogQtd = backlog.length;
     const backlogValor = backlog.reduce((a,p) => a + (p.valor||0), 0);
 
@@ -451,7 +453,7 @@ function renderPlano(){
 }
 
 async function renderizarPlanoAsync(){
-    const backlog = todosPedidos.filter(p => p.status === 'ENVIADO PARA FATURAMENTO (PD)');
+    const backlog = dadosFaturados.pedidos;
 
     const est = await carregarEstoqueResumo();
     if (est) {
@@ -469,7 +471,7 @@ async function renderizarPlanoAsync(){
 
     const porMes = {};
     NOMES_MES.forEach(m => porMes[m] = 0);
-    backlog.forEach(p => { const m = mesDoEnvio(p.dataEnvio); if (m) porMes[NOMES_MES[m-1]] += (p.valor||0); });
+    backlog.forEach(p => { if (p.mes) porMes[NOMES_MES[p.mes-1]] += (p.valor||0); });
     const ctx = document.getElementById('chartPlanoMes');
     if (ctx){
         if (window.chartPlanoMesInstance) window.chartPlanoMesInstance.destroy();
@@ -503,6 +505,14 @@ async function init(){
         const diretorias = [...new Set(todosPedidos.map(p=>p.diretoria).filter(Boolean))].sort();
         window.__diretoriasCache = diretorias;
         window.__vendedoresCache = [...new Set(todosPedidos.map(p=>p.kam).filter(Boolean))].sort();
+
+        try {
+            dadosFaturados = await carregarFaturados();
+        } catch (e) {
+            console.warn('⚠ Faturados.csv não encontrado ainda:', e.message);
+            dadosFaturados = { itens:[], pedidos:[] };
+        }
+
         irPara(activeTab);
     } catch (err) {
         console.error(err);
