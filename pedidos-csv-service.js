@@ -2,7 +2,7 @@
 // PEDIDOS-CSV-SERVICE.JS — mesma fonte do Painel de Pedidos (Airtable)
 // ═══════════════════════════════════════════════════════════════
 const PEDIDOS_CSV_URL = 'https://raw.githubusercontent.com/smlivoltek/Pedidos-Livoltek/main/pedidos.csv';
-const DIRETORIAS_CSV_URL = 'data/diretorias.csv'; // opcional — Vendedor;Diretoria. Se não existir, cai no mapa fixo abaixo.
+const DIRETORIAS_CSV_URL = 'diretorias.csv'; // opcional — Vendedor;Diretoria. Se não existir, cai no mapa fixo abaixo.
 
 const KAM_TO_DIRETORIA_FIXO = {
     'Leonardo Dib': 'Distribution', 'Marcelo Leite': 'Distribution', 'Tainara': 'Distribution',
@@ -166,4 +166,60 @@ async function carregarPedidos() {
         });
     }
     return { pedidos, avisoValorInconsistente: posComValorInconsistente };
+}
+
+// ══════════════════════════════════════════════════════════════
+// FATURADOS.CSV — fonte real de faturamento (NF), com valor por
+// produto e por pedido. Colunas: Issue Date;Invoice;Boarding Location;
+// Seller;PO;Operation;Customer;CNPJ/CPF;Product;Code;Qty;Tax (IPI);
+// Net Unit Value.;Gross Unit Value.;Total without tax;Total with tax;
+// Freight;Discount Amount;Status;Delivery Date;Notes;Cliente;Contrato
+// ══════════════════════════════════════════════════════════════
+const FATURADOS_CSV_URL = 'Faturados.csv'; // mesma pasta do index.html
+
+function parseValorSimples(s){
+    if (!s) return 0;
+    return parseFloat(String(s).replace(',', '.').replace(/[^\d.-]/g,'')) || 0;
+}
+
+async function carregarFaturados(){
+    await carregarMapaDiretorias();
+    const texto = await fetchTextoLatin1(FATURADOS_CSV_URL);
+    const linhasBrutas = texto.trim().split(/\r?\n/).filter(l => l.trim());
+    const linhas = linhasBrutas.slice(1).map(l => l.split(';'));
+
+    // Só considera Status "Current" — Re-invoiced/Rebilling ficam de fora pra não contar duplicado.
+    // Se isso não bater com o que você espera, me avisa que ajusto o filtro.
+    const itens = linhas
+        .filter(c => c[4] && (c[18]||'').trim() === 'Current')
+        .map(c => {
+            const { ano, mes } = extrairAnoMes((c[0]||'').trim());
+            return {
+                dataEmissao: (c[0]||'').trim(),
+                invoice: (c[1]||'').trim(),
+                warehouse: (c[2]||'').trim(),
+                seller: (c[3]||'').trim(),
+                diretoria: getDiretoria((c[3]||'').trim()),
+                po: (c[4]||'').trim(),
+                cliente: (c[6]||'').trim(),
+                produto: (c[8]||'').trim(),
+                codigo: (c[9]||'').trim(),
+                qtd: parseValorSimples(c[10]),
+                valor: parseValorSimples(c[15]), // Total with tax
+                status: (c[18]||'').trim(),
+                contrato: (c[22]||'').trim(),
+                ano, mes
+            };
+        });
+
+    // Agregado por PO (soma as linhas de produto do mesmo pedido)
+    const porPO = {};
+    itens.forEach(it => {
+        if (!porPO[it.po]) porPO[it.po] = { ...it, valor:0, qtd:0, itens:0 };
+        porPO[it.po].valor += it.valor;
+        porPO[it.po].qtd += it.qtd;
+        porPO[it.po].itens += 1;
+    });
+
+    return { itens, pedidos: Object.values(porPO) };
 }
