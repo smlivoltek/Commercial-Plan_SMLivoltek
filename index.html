@@ -460,10 +460,14 @@ function renderPlano(){
                 <option value="Inverter">Inverter</option>
                 <option value="Accessories">Accessories</option>
             </select>
+            <select id="filtroCategoriaProdutoSel" onchange="renderTabelaCategoria()">
+                <option value="">Product: All (choose a category first)</option>
+            </select>
             <input type="text" id="filtroCategoriaProduto" placeholder="Search product or code..." oninput="renderTabelaCategoria()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:240px">
         </div>
         <canvas id="chartCategoria" style="max-height:260px;margin-bottom:16px"></canvas>
         <div id="tabelaCategoriaWrap"></div>
+        <div id="gradeProdutoMesWrap" style="margin-top:18px"></div>
     </div>
     <div class="card"><h3>Top 10 Clientes (Backlog)</h3>
         <div id="tabelaTopClientes"></div>
@@ -525,9 +529,28 @@ function renderTabelaCategoria(){
     if (!produtosCruzados) return;
     const catF = document.getElementById('filtroCategoria')?.value || '';
     const busca = (document.getElementById('filtroCategoriaProduto')?.value || '').toLowerCase();
+    const produtoSel = document.getElementById('filtroCategoriaProdutoSel')?.value || '';
+
+    // Popula o dropdown de produto com os itens da categoria escolhida
+    const selProd = document.getElementById('filtroCategoriaProdutoSel');
+    if (selProd){
+        const chaveAtual = catF + '|' + produtoSel;
+        if (selProd.dataset.categoriaAtual !== catF){
+            const produtosDaCategoria = catF
+                ? [...new Set(produtosCruzados.filter(p=>p.categoria===catF).map(p=>p.codigo))].sort()
+                : [];
+            selProd.innerHTML = '<option value="">Product: All' + (catF ? '' : ' (choose a category first)') + '</option>'
+                + produtosDaCategoria.map(cod => {
+                    const p = produtosCruzados.find(x=>x.codigo===cod);
+                    return `<option value="${cod}">${cod} — ${(p.descricao||'').slice(0,40)}</option>`;
+                }).join('');
+            selProd.dataset.categoriaAtual = catF;
+        }
+    }
 
     const filtrados = produtosCruzados.filter(p =>
         (!catF || p.categoria === catF) &&
+        (!produtoSel || p.codigo === produtoSel) &&
         (!busca || p.codigo.toLowerCase().includes(busca) || p.descricao.toLowerCase().includes(busca))
     );
 
@@ -565,6 +588,41 @@ function renderTabelaCategoria(){
         });
         html += '</table></div>';
         el.innerHTML = html;
+    }
+
+    // Grade Produto × Mês — só aparece quando uma categoria está selecionada,
+    // no estilo da planilha (quantidade faturada por mês, célula colorida quando > 0).
+    const gradeEl = document.getElementById('gradeProdutoMesWrap');
+    if (gradeEl){
+        if (!catF){
+            gradeEl.innerHTML = '<p style="font-size:12.5px;color:#6b7280;padding:10px 0">Escolha uma categoria acima pra ver a grade Produto × Mês.</p>';
+        } else {
+            const codigosDaGrade = filtrados.map(p => p.codigo);
+            const porProdutoMes = {}; // { codigo: { 1:qtd, 2:qtd, ... } }
+            dadosFaturados.itens.forEach(it => {
+                if (!codigosDaGrade.includes(it.codigo) || !it.mes) return;
+                porProdutoMes[it.codigo] = porProdutoMes[it.codigo] || {};
+                porProdutoMes[it.codigo][it.mes] = (porProdutoMes[it.codigo][it.mes]||0) + it.qtd;
+            });
+
+            let g = `<h4 style="font-size:13px;margin-bottom:10px">Product × Month — ${catF} (Backlog qty)</h4>`;
+            g += '<div class="table-wrap"><table><tr><th>Product</th><th>Code</th>' + NOMES_MES.map(m=>`<th style="text-align:center">${m}</th>`).join('') + '<th style="text-align:center">Total</th></tr>';
+            filtrados.forEach(p => {
+                const meses = porProdutoMes[p.codigo] || {};
+                const total = Object.values(meses).reduce((a,v)=>a+v,0);
+                if (total === 0) return; // sem faturamento no período — não polui a grade
+                g += `<tr><td style="max-width:220px">${p.descricao}</td><td><strong>${p.codigo}</strong></td>`;
+                for (let m = 1; m <= 12; m++){
+                    const v = meses[m] || 0;
+                    const bg = v > 0 ? '#dbeafe' : 'transparent';
+                    const cor = v > 0 ? '#1e3a8a' : '#cbd5e1';
+                    g += `<td style="text-align:center;background:${bg};color:${cor};font-weight:${v>0?'700':'400'}">${v>0?fmt(v):'-'}</td>`;
+                }
+                g += `<td style="text-align:center;font-weight:700">${fmt(total)}</td></tr>`;
+            });
+            g += '</table></div>';
+            gradeEl.innerHTML = g;
+        }
     }
 }
 
