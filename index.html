@@ -78,12 +78,12 @@ tr:hover{background:#fafafa}
 const TABS = [
     { id:'executivo', ico:'📊', label:'Dashboard Executivo', ativo:true },
     { id:'plano', ico:'📋', label:'Plano Comercial', ativo:true },
-    { id:'contratos', ico:'📄', label:'Contratos', ativo:false },
+    { id:'contratos', ico:'📄', label:'Contratos', ativo:true },
     { id:'pedidos', ico:'📦', label:'Pedidos', ativo:true },
     { id:'faturamento', ico:'💵', label:'Faturamento', ativo:true },
     { id:'estoque', ico:'🏭', label:'Estoque', ativo:false },
     { id:'importacoes', ico:'🚢', label:'Importações', ativo:false },
-    { id:'produtos', ico:'🔧', label:'Produtos', ativo:false },
+    { id:'produtos', ico:'🔧', label:'Produtos', ativo:true },
     { id:'diretorias', ico:'🏢', label:'Diretorias', ativo:false },
     { id:'alertas', ico:'🚨', label:'Alertas', ativo:false },
     { id:'config', ico:'⚙️', label:'Configurações', ativo:false },
@@ -112,6 +112,8 @@ function irPara(tabId){
     else if (tabId === 'pedidos') root.innerHTML = renderPedidos();
     else if (tabId === 'faturamento') root.innerHTML = renderFaturamento();
     else if (tabId === 'plano') root.innerHTML = renderPlano();
+    else if (tabId === 'produtos') root.innerHTML = renderProdutos();
+    else if (tabId === 'contratos') root.innerHTML = renderContratos();
     else root.innerHTML = renderPlaceholder(tab.label);
 }
 
@@ -442,6 +444,21 @@ function renderPlano(){
     <div class="card"><h3>Comparativo Mensal — Backlog (Estoque e Big Chances entram quando tiverem fonte)</h3>
         <canvas id="chartPlanoMes" style="max-height:280px"></canvas>
     </div>
+    <div class="card">
+        <h3>Estoque × Big Chance × Backlog por Categoria</h3>
+        <div class="filters">
+            <select id="filtroCategoria" onchange="renderTabelaCategoria()">
+                <option value="">Category: All</option>
+                <option value="E-mobility">E-mobility</option>
+                <option value="BESS">BESS</option>
+                <option value="Inverter">Inverter</option>
+                <option value="Accessories">Accessories</option>
+            </select>
+            <input type="text" id="filtroCategoriaProduto" placeholder="Search product or code..." oninput="renderTabelaCategoria()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:240px">
+        </div>
+        <canvas id="chartCategoria" style="max-height:260px;margin-bottom:16px"></canvas>
+        <div id="tabelaCategoriaWrap"></div>
+    </div>
     <div class="card"><h3>Top 10 Clientes (Backlog)</h3>
         <div id="tabelaTopClientes"></div>
     </div>
@@ -493,6 +510,261 @@ async function renderizarPlanoAsync(){
         html += '</table></div>';
         elTop.innerHTML = top10.length ? html : '<div class="empty">No records.</div>';
     }
+
+    await calcularProdutosCruzados();
+    renderTabelaCategoria();
+}
+
+function renderTabelaCategoria(){
+    if (!produtosCruzados) return;
+    const catF = document.getElementById('filtroCategoria')?.value || '';
+    const busca = (document.getElementById('filtroCategoriaProduto')?.value || '').toLowerCase();
+
+    const filtrados = produtosCruzados.filter(p =>
+        (!catF || p.categoria === catF) &&
+        (!busca || p.codigo.toLowerCase().includes(busca) || p.descricao.toLowerCase().includes(busca))
+    );
+
+    const categorias = ['E-mobility','BESS','Inverter','Accessories'];
+    const porCategoria = {};
+    categorias.forEach(c => porCategoria[c] = { estoque:0, backlogValor:0, skus:0 });
+    filtrados.forEach(p => {
+        porCategoria[p.categoria].estoque += p.saldo;
+        porCategoria[p.categoria].backlogValor += p.vendaValor;
+        porCategoria[p.categoria].skus += 1;
+    });
+
+    const ctx = document.getElementById('chartCategoria');
+    if (ctx){
+        if (window.chartCategoriaInstance) window.chartCategoriaInstance.destroy();
+        window.chartCategoriaInstance = new Chart(ctx, {
+            type:'bar',
+            data:{
+                labels: categorias,
+                datasets:[
+                    { label:'Backlog (R$)', data: categorias.map(c=>porCategoria[c].backlogValor), backgroundColor:'#16a34a', borderRadius:6 },
+                ]
+            },
+            options:{ responsive:true, maintainAspectRatio:true, plugins:{legend:{position:'bottom'},
+                tooltip:{callbacks:{label:(item)=>fmtR$(item.parsed.y)}}}, scales:{y:{ticks:{callback:(v)=>fmtR$(v)}}} }
+        });
+    }
+
+    const el = document.getElementById('tabelaCategoriaWrap');
+    if (el){
+        let html = '<div class="table-wrap"><table><tr><th>Category</th><th>SKUs</th><th>Stock (units)</th><th>Big Chance</th><th>Backlog (R$)</th></tr>';
+        categorias.forEach(c => {
+            const d = porCategoria[c];
+            html += `<tr><td><strong>${c}</strong></td><td>${fmt(d.skus)}</td><td>${fmt(d.estoque)}</td><td style="color:#cbd5e1">Sem dados</td><td>${fmtR$(d.backlogValor)}</td></tr>`;
+        });
+        html += '</table></div>';
+        el.innerHTML = html;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// PRODUTOS — cruza venda por código (Faturados.csv) com saldo por
+// código (ESTOQUE.csv do repositório livoltek) e calcula cobertura.
+// ══════════════════════════════════════════════════════════════
+let estoquePorCodigo = null;
+
+async function carregarEstoquePorCodigo(){
+    if (estoquePorCodigo) return estoquePorCodigo;
+    try {
+        const buf = await fetch('https://raw.githubusercontent.com/smlivoltek/livoltek/main/data/ESTOQUE.csv').then(r => r.arrayBuffer());
+        const texto = new TextDecoder('windows-1252').decode(buf);
+        const linhas = texto.trim().split('\n').slice(1).map(l => splitCSVLinhaSimples(l));
+        const mapa = {};
+        linhas.forEach(c => {
+            const codigo = (c[0]||'').trim();
+            if (!codigo) return;
+            if (!mapa[codigo]) mapa[codigo] = { codigo, descricao:(c[17]||c[3]||'').trim(), saldo:0, disponivel:0 };
+            mapa[codigo].saldo += parseFloat(c[7]) || 0;
+            mapa[codigo].disponivel += parseFloat(c[9]) || 0;
+        });
+        estoquePorCodigo = mapa;
+    } catch (e) {
+        console.warn('⚠ Não foi possível carregar estoque por código:', e.message);
+        estoquePorCodigo = {};
+    }
+    return estoquePorCodigo;
+}
+function splitCSVLinhaSimples(linha){
+    const campos = []; let atual=''; let aspas=false;
+    for (const ch of linha){
+        if (ch === '"'){ aspas = !aspas; continue; }
+        if (ch === ';' && !aspas){ campos.push(atual); atual=''; continue; }
+        atual += ch;
+    }
+    campos.push(atual);
+    return campos;
+}
+
+function statusCobertura(mesesCobertura, saldo){
+    if (saldo <= 0) return { emoji:'🔴', label:'Ruptura' };
+    if (mesesCobertura === null) return { emoji:'⚪', label:'Sem venda' };
+    if (mesesCobertura < 1) return { emoji:'🔴', label:'Ruptura' };
+    if (mesesCobertura <= 3) return { emoji:'🟡', label:'Atenção' };
+    return { emoji:'🟢', label:'OK' };
+}
+
+function classificarCategoria(descricao){
+    const d = (descricao || '').toUpperCase();
+    if (/CARREGADOR|CHARGER|EV\b|MOBILITY/.test(d)) return 'E-mobility';
+    if (/BATERIA|BESS|POWER STATION|BATTERY/.test(d)) return 'BESS';
+    if (/INVERSOR|INVERTER/.test(d)) return 'Inverter';
+    return 'Accessories';
+}
+
+async function calcularProdutosCruzados(){
+    if (produtosCruzados) return produtosCruzados;
+    const estoque = await carregarEstoquePorCodigo();
+
+    const vendaPorCodigo = {};
+    const mesesNoArquivo = new Set();
+    dadosFaturados.itens.forEach(it => {
+        if (!it.codigo) return;
+        vendaPorCodigo[it.codigo] = vendaPorCodigo[it.codigo] || { qtd:0, valor:0, produto: it.produto };
+        vendaPorCodigo[it.codigo].qtd += it.qtd;
+        vendaPorCodigo[it.codigo].valor += it.valor;
+        if (it.ano && it.mes) mesesNoArquivo.add(it.ano+'-'+it.mes);
+    });
+    const numMeses = Math.max(mesesNoArquivo.size, 1);
+
+    const codigos = new Set([...Object.keys(estoque), ...Object.keys(vendaPorCodigo)]);
+    produtosCruzados = [...codigos].map(cod => {
+        const est = estoque[cod] || { saldo:0, disponivel:0, descricao:'' };
+        const venda = vendaPorCodigo[cod] || { qtd:0, valor:0, produto:'' };
+        const descricao = est.descricao || venda.produto || cod;
+        const vendaMensalMedia = venda.qtd / numMeses;
+        const mesesCobertura = vendaMensalMedia > 0 ? (est.saldo / vendaMensalMedia) : null;
+        return {
+            codigo: cod, descricao, categoria: classificarCategoria(descricao),
+            saldo: est.saldo, vendaTotal: venda.qtd, vendaValor: venda.valor,
+            vendaMensalMedia, mesesCobertura, status: statusCobertura(mesesCobertura, est.saldo)
+        };
+    }).filter(p => p.saldo > 0 || p.vendaTotal > 0);
+
+    return produtosCruzados;
+}
+
+// ══════════════════════════════════════════════════════════════
+// CONTRATOS — mapa Cliente → Nº Contrato. Lista curta por enquanto;
+// Cristiane vai complementar com mais contratos depois. O valor/produto
+// de cada contrato vem do cruzamento com Faturados.csv pelo nome do cliente
+// (match por trecho, já que o nome aqui é o "apelido" e no Faturados.csv
+// vem a razão social completa).
+// ══════════════════════════════════════════════════════════════
+const CONTRATOS_MAP = [
+    { cliente:'Renault', numero:'41' },
+    { cliente:'GWM', numero:'1345715387' },
+    { cliente:'Cincatarina', numero:'1341791396' },
+    { cliente:'SP Trans', numero:'1351750332' },
+];
+
+function clienteBate(apelido, nomeCompleto){
+    const a = apelido.toUpperCase().replace(/\s+/g,'');
+    const n = (nomeCompleto||'').toUpperCase().replace(/\s+/g,'');
+    return n.includes(a) || a.includes(n);
+}
+
+function renderContratos(){
+    if (dadosFaturados.itens.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+
+    const contratos = CONTRATOS_MAP.map(c => {
+        const itensCliente = dadosFaturados.itens.filter(it => clienteBate(c.cliente, it.cliente));
+        const valorFaturado = itensCliente.reduce((a,it) => a + it.valor, 0);
+        const produtos = [...new Set(itensCliente.map(it => it.produto).filter(Boolean))];
+        const pedidosUnicos = new Set(itensCliente.map(it => it.po)).size;
+        return { ...c, valorFaturado, produtos, pedidosUnicos, encontrado: itensCliente.length > 0 };
+    });
+
+    const totalFaturado = contratos.reduce((a,c) => a+c.valorFaturado, 0);
+
+    let html = `
+    <div class="kpi-grid">
+        <div class="kpi-card"><h4>Contratos Cadastrados</h4><div class="valor">${fmt(contratos.length)}</div></div>
+        <div class="kpi-card verde"><h4>Total Faturado (destes contratos)</h4><div class="valor">${fmtR$(totalFaturado)}</div></div>
+        <div class="kpi-card vazio"><h4>Meta / o que falta</h4><div class="valor vazio">Sem dados</div></div>
+    </div>
+    <div class="card"><h3>Contratos</h3>
+        <p style="font-size:12.5px;color:#6b7280;margin-bottom:12px">
+            Valor = soma do que já foi faturado (Faturados.csv) pra esse cliente. Ainda não temos a meta/valor total
+            do contrato, então não dá pra mostrar "o que falta" — só o que já saiu.
+        </p>
+        <div class="table-wrap"><table><tr><th>Client</th><th>Contract #</th><th>Orders</th><th>Invoiced (R$)</th><th>Products</th></tr>`;
+    contratos.forEach(c => {
+        html += `<tr>
+            <td><strong>${c.cliente}</strong></td>
+            <td>${c.numero}</td>
+            <td>${fmt(c.pedidosUnicos)}</td>
+            <td>${fmtR$(c.valorFaturado)}</td>
+            <td style="max-width:320px;font-size:12px">${c.encontrado ? c.produtos.slice(0,4).join(', ') + (c.produtos.length>4 ? ` +${c.produtos.length-4} more` : '') : '<span style="color:#dc2626">No match found in Faturados.csv</span>'}</td>
+        </tr>`;
+    });
+    html += '</table></div></div>';
+    return html;
+}
+
+function renderProdutos(){
+    if (dadosFaturados.itens.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    return `
+    <div class="filters">
+        <input type="text" id="filtroProdutoBusca" placeholder="Search code or product..." oninput="renderTabelaProdutosSKU()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:260px">
+        <select id="filtroProdutoStatus" onchange="renderTabelaProdutosSKU()">
+            <option value="">Status: All</option>
+            <option value="🔴">🔴 Ruptura</option>
+            <option value="🟡">🟡 Atenção</option>
+            <option value="🟢">🟢 OK</option>
+            <option value="⚪">⚪ Sem venda no período</option>
+        </select>
+    </div>
+    <div class="kpi-grid" id="produtosKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
+    <div class="card"><h3>Produtos — Estoque × Venda × Cobertura</h3><div id="tabelaProdutosSKU"></div></div>`;
+}
+
+let produtosCruzados = null;
+
+async function renderizarProdutosAsync(){
+    await calcularProdutosCruzados();
+
+    document.getElementById('produtosKpis').innerHTML = `
+        <div class="kpi-card"><h4>SKUs Analisados</h4><div class="valor">${fmt(produtosCruzados.length)}</div></div>
+        <div class="kpi-card vermelho"><h4>🔴 Ruptura</h4><div class="valor">${fmt(produtosCruzados.filter(p=>p.status.emoji==='🔴').length)}</div></div>
+        <div class="kpi-card laranja"><h4>🟡 Atenção</h4><div class="valor">${fmt(produtosCruzados.filter(p=>p.status.emoji==='🟡').length)}</div></div>
+        <div class="kpi-card verde"><h4>🟢 OK</h4><div class="valor">${fmt(produtosCruzados.filter(p=>p.status.emoji==='🟢').length)}</div></div>`;
+
+    renderTabelaProdutosSKU();
+}
+
+function renderTabelaProdutosSKU(){
+    if (!produtosCruzados) return;
+    const busca = (document.getElementById('filtroProdutoBusca')?.value || '').toLowerCase();
+    const statusF = document.getElementById('filtroProdutoStatus')?.value || '';
+
+    let lista = produtosCruzados.filter(p =>
+        (!busca || p.codigo.toLowerCase().includes(busca) || p.descricao.toLowerCase().includes(busca)) &&
+        (!statusF || p.status.emoji === statusF)
+    );
+    lista.sort((a,b) => (a.mesesCobertura ?? 999) - (b.mesesCobertura ?? 999));
+
+    const el = document.getElementById('tabelaProdutosSKU');
+    if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; return; }
+
+    let html = '<div class="table-wrap"><table><tr>' +
+        ['Status','Code','Product','Stock','Avg. Monthly Sales','Coverage (months)'].map(h=>`<th>${h}</th>`).join('') + '</tr>';
+    lista.forEach(p => {
+        html += `<tr>
+            <td>${p.status.emoji} ${p.status.label}</td>
+            <td><strong>${p.codigo}</strong></td>
+            <td style="max-width:280px">${p.descricao}</td>
+            <td>${fmt(p.saldo)}</td>
+            <td>${p.vendaMensalMedia.toFixed(1)}</td>
+            <td>${p.mesesCobertura !== null ? p.mesesCobertura.toFixed(1) : '—'}</td>
+        </tr>`;
+    });
+    html += '</table></div>';
+    el.innerHTML = html;
 }
 
 async function init(){
@@ -533,6 +805,7 @@ irPara = function(tabId){
     if (tabId === 'executivo' && todosPedidos.length) setTimeout(() => { desenharChartExecutivo(); renderDrillDiretoriaVendedor(); }, 50);
     if (tabId === 'faturamento' && todosPedidos.length) setTimeout(renderTabelaFaturamento, 50);
     if (tabId === 'plano' && todosPedidos.length) setTimeout(renderizarPlanoAsync, 50);
+    if (tabId === 'produtos' && dadosFaturados.itens.length) setTimeout(renderizarProdutosAsync, 50);
 };
 
 document.addEventListener('DOMContentLoaded', init);
