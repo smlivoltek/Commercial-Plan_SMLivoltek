@@ -93,6 +93,8 @@ let activeTab = 'executivo';
 let todosPedidos = [];
 let avisoValorInconsistente = [];
 let dadosFaturados = { itens:[], pedidos:[] };
+let faturadosStatus = 'carregando'; // 'carregando' | 'ok' | 'erro'
+let faturadosErro = '';
 
 function buildNav(){
     document.getElementById('navMenu').innerHTML = TABS.map(tab => `
@@ -272,7 +274,9 @@ function anoDoEnvio(dataEnvioStr){
 const NOMES_MES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function renderFaturamento(){
-    if (dadosFaturados.pedidos.length === 0) return '<div class="loading">⏳ Loading Faturados.csv... (se continuar carregando, o arquivo pode não estar no repositório ainda)</div>';
+    if (faturadosStatus === 'carregando') return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'erro') return `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading Faturados.csv: ${faturadosErro}. Confirma se o arquivo está na raiz do repositório, com esse nome exato.</div>`;
+    if (dadosFaturados.pedidos.length === 0) return '<div class="empty">Faturados.csv loaded but has no valid rows (check the Status column — only "Current" rows are counted).</div>';
 
     const diretorias = [...new Set(dadosFaturados.pedidos.map(p=>p.diretoria).filter(Boolean))].sort();
     const vendedores = [...new Set(dadosFaturados.pedidos.map(p=>p.seller).filter(Boolean))].sort();
@@ -424,7 +428,9 @@ async function carregarEstoqueResumo(){
 }
 
 function renderPlano(){
-    if (dadosFaturados.pedidos.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'carregando') return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'erro') return `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading Faturados.csv: ${faturadosErro}. Confirma se o arquivo está na raiz do repositório, com esse nome exato.</div>`;
+    if (dadosFaturados.pedidos.length === 0) return '<div class="empty">Faturados.csv loaded but has no valid rows.</div>';
 
     const backlog = dadosFaturados.pedidos;
     const backlogQtd = backlog.length;
@@ -669,7 +675,9 @@ function clienteBate(apelido, nomeCompleto){
 }
 
 function renderContratos(){
-    if (dadosFaturados.itens.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'carregando') return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'erro') return `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading Faturados.csv: ${faturadosErro}</div>`;
+    if (dadosFaturados.itens.length === 0) return '<div class="empty">Faturados.csv loaded but has no valid rows.</div>';
 
     const contratos = CONTRATOS_MAP.map(c => {
         const itensCliente = dadosFaturados.itens.filter(it => clienteBate(c.cliente, it.cliente));
@@ -707,7 +715,9 @@ function renderContratos(){
 }
 
 function renderProdutos(){
-    if (dadosFaturados.itens.length === 0) return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'carregando') return '<div class="loading">⏳ Loading Faturados.csv...</div>';
+    if (faturadosStatus === 'erro') return `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading Faturados.csv: ${faturadosErro}</div>`;
+    if (dadosFaturados.itens.length === 0) return '<div class="empty">Faturados.csv loaded but has no valid rows.</div>';
     return `
     <div class="filters">
         <input type="text" id="filtroProdutoBusca" placeholder="Search code or product..." oninput="renderTabelaProdutosSKU()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:260px">
@@ -780,9 +790,12 @@ async function init(){
 
         try {
             dadosFaturados = await carregarFaturados();
+            faturadosStatus = 'ok';
         } catch (e) {
             console.warn('⚠ Faturados.csv não encontrado ainda:', e.message);
             dadosFaturados = { itens:[], pedidos:[] };
+            faturadosStatus = 'erro';
+            faturadosErro = e.message;
         }
 
         irPara(activeTab);
