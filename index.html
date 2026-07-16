@@ -447,7 +447,7 @@ function renderPlano(){
         <div class="kpi-card verde" id="kpiEstoqueLivre"><h4>Estoque Livre</h4><div class="valor">Carregando...</div></div>
         <div class="kpi-card" id="kpiCobertura"><h4>Cobertura</h4><div class="valor">Carregando...</div></div>
     </div>
-    <div class="card"><h3>Comparativo Mensal — Backlog (Estoque e Big Chances entram quando tiverem fonte)</h3>
+    <div class="card"><h3>Comparativo Mensal — Backlog × Estoque (referência de Julho) — Big Chances entra quando tiver fonte</h3>
         <canvas id="chartPlanoMes" style="max-height:280px"></canvas>
     </div>
     <div class="card">
@@ -499,14 +499,33 @@ async function renderizarPlanoAsync(){
     const porMes = {};
     NOMES_MES.forEach(m => porMes[m] = 0);
     backlog.forEach(p => { if (p.mes) porMes[NOMES_MES[p.mes-1]] += (p.valor||0); });
+
+    // Estoque não tem histórico mensal ainda — mostra só como referência em Julho.
+    // Cristiane vai atualizar mês a mês a partir daqui.
+    const estoqueMesReferencia = 'Jul';
+    const estoquePorMes = NOMES_MES.map(m => m === estoqueMesReferencia && est ? est.atual : null);
+
     const ctx = document.getElementById('chartPlanoMes');
     if (ctx){
         if (window.chartPlanoMesInstance) window.chartPlanoMesInstance.destroy();
         window.chartPlanoMesInstance = new Chart(ctx, {
             type:'bar',
-            data:{ labels:Object.keys(porMes), datasets:[{ label:'Backlog', data:Object.values(porMes), backgroundColor:'#2563eb', borderRadius:6 }] },
-            options:{ responsive:true, maintainAspectRatio:true, plugins:{legend:{position:'bottom'},
-                tooltip:{callbacks:{label:(item)=>fmtR$(item.parsed.y)}}}, scales:{y:{ticks:{callback:(v)=>fmtR$(v)}}} }
+            data:{
+                labels:Object.keys(porMes),
+                datasets:[
+                    { label:'Backlog (R$)', data:Object.values(porMes), backgroundColor:'#2563eb', borderRadius:6, yAxisID:'y' },
+                    { label:'Estoque (un. — só referência de Jul)', data:estoquePorMes, backgroundColor:'#f59e0b', borderRadius:6, yAxisID:'y1' },
+                ]
+            },
+            options:{
+                responsive:true, maintainAspectRatio:true,
+                plugins:{ legend:{position:'bottom'}, tooltip:{callbacks:{label:(item)=>
+                    item.dataset.yAxisID==='y1' ? fmt(item.parsed.y)+' un.' : fmtR$(item.parsed.y)}} },
+                scales:{
+                    y:{ position:'left', ticks:{callback:(v)=>fmtR$(v)}, title:{display:true,text:'Backlog (R$)'} },
+                    y1:{ position:'right', ticks:{callback:(v)=>fmt(v)}, grid:{drawOnChartArea:false}, title:{display:true,text:'Estoque (un.)'} }
+                }
+            }
         });
     }
 
