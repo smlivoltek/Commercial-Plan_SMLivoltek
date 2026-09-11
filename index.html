@@ -800,8 +800,10 @@ let vendasProdutosStatus = 'carregando';
 let vendasProdutosErro = '';
 const NOMES_MES_VENDAS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-async function carregarVendasProdutos(){
-    const buf = await fetch('https://raw.githubusercontent.com/smlivoltek/Commercial-Plan_SMLivoltek/main/vendas_produtos.csv').then(r => {
+const ANOS_VENDAS_PRODUTOS = [2026, 2025, 2024]; // tenta cada ano; 404 é normal até o arquivo daquele ano existir
+
+async function carregarVendasProdutosDeUmAno(ano){
+    const buf = await fetch(`https://raw.githubusercontent.com/smlivoltek/Commercial-Plan_SMLivoltek/main/vendas_produtos_${ano}.csv`).then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.arrayBuffer();
     });
@@ -814,6 +816,7 @@ async function carregarVendasProdutos(){
             descricao: (c[1]||'').trim(),
             categoria: (c[2]||'').trim(),
             armazem: (c[3]||'').trim(),
+            ano: ano,
             mes: (c[4]||'').trim(),
             pedido: (c[5]||'').trim(),
             vendedor: (c[6]||'').trim(),
@@ -823,12 +826,23 @@ async function carregarVendasProdutos(){
     });
 }
 
+async function carregarVendasProdutos(){
+    const resultados = await Promise.allSettled(ANOS_VENDAS_PRODUTOS.map(carregarVendasProdutosDeUmAno));
+    const linhas = resultados.filter(r => r.status === 'fulfilled').flatMap(r => r.value);
+    if (linhas.length === 0) throw new Error('Nenhum arquivo vendas_produtos_[ano].csv encontrado');
+    return linhas;
+}
+
 function renderProdutos(){
     let secaoNova = '';
     if (vendasProdutosStatus === 'carregando') secaoNova = '<div class="loading">⏳ Loading vendas_produtos.csv...</div>';
     else if (vendasProdutosStatus === 'erro') secaoNova = `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading vendas_produtos.csv: ${vendasProdutosErro}. Confirma se o arquivo está em data/vendas_produtos.csv no repositório.</div>`;
     else secaoNova = `
     <div class="filters">
+        <input type="text" id="prodBusca" placeholder="Search product code..." oninput="renderTabelaVendasProdutos()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:220px">
+        <select id="prodAno" onchange="renderTabelaVendasProdutos()">
+            <option value="">Year: All</option>
+        </select>
         <select id="prodCategoria" onchange="renderTabelaVendasProdutos()">
             <option value="">Category: All</option>
             <option value="Inversor">Inversor</option>
@@ -847,8 +861,7 @@ function renderProdutos(){
         </select>
     </div>
     <div class="kpi-grid" id="prodKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
-    <div class="card"><h3>Top 10 Products (selected filters)</h3><canvas id="chartProdTop10" style="max-height:340px"></canvas></div>
-    <div class="card"><h3>All Products (selected filters)</h3><div id="tabelaVendasProdutos"></div></div>`;
+    <div class="card"><h3>Products (selected filters)</h3><div id="tabelaVendasProdutos"></div></div>`;
 
     return `
     ${secaoNova}
@@ -856,6 +869,13 @@ function renderProdutos(){
     <p style="font-size:12px;color:var(--texto-suave);margin-bottom:14px">Legacy analysis below (Stock × Sales × Coverage) — depends on Faturados.csv, still pending.</p>
     <div class="kpi-grid" id="produtosKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
     <div class="card"><h3>Produtos — Estoque × Venda × Cobertura</h3><div id="tabelaProdutosSKU"></div></div>`;
+}
+
+function popularFiltroAnoProdutos(){
+    const sel = document.getElementById('prodAno');
+    if (!sel || sel.options.length > 1) return;
+    const anos = [...new Set(dadosVendasProdutos.map(p=>p.ano).filter(Boolean))].sort((a,b) => b-a);
+    anos.forEach(a => sel.innerHTML += `<option value="${a}">${a}</option>`);
 }
 
 function popularFiltroMesProdutos(){
@@ -867,12 +887,17 @@ function popularFiltroMesProdutos(){
 }
 
 function renderTabelaVendasProdutos(){
+    popularFiltroAnoProdutos();
     popularFiltroMesProdutos();
+    const busca = (document.getElementById('prodBusca')?.value || '').toLowerCase().trim();
+    const ano = document.getElementById('prodAno')?.value || '';
     const cat = document.getElementById('prodCategoria')?.value || '';
     const arm = document.getElementById('prodArmazem')?.value || '';
     const mes = document.getElementById('prodMes')?.value || '';
 
     const filtrados = dadosVendasProdutos.filter(p =>
+        (!busca || p.codigo.toLowerCase().includes(busca) || p.descricao.toLowerCase().includes(busca)) &&
+        (!ano || p.ano === Number(ano)) &&
         (!cat || p.categoria === cat) &&
         (!arm || p.armazem === arm) &&
         (!mes || p.mes === mes)
@@ -901,21 +926,6 @@ function renderTabelaVendasProdutos(){
         <div class="kpi-card verde"><h4>Total Value</h4><div class="valor">${fmtR$(totalValor)}</div></div>
         <div class="kpi-card laranja"><h4>Leading Category</h4><div class="valor" style="font-size:18px">${categoriaLider ? categoriaLider[0] : '—'}</div></div>
         <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px">${armazemLider ? armazemLider[0] : '—'}</div></div>`;
-
-    const top10 = lista.slice(0, 10);
-    if (window.chartProdTop10Instance) window.chartProdTop10Instance.destroy();
-    window.chartProdTop10Instance = new Chart(document.getElementById('chartProdTop10'), {
-        type: 'bar',
-        data: {
-            labels: [...top10].reverse().map(p => `${p.codigo} - ${(p.descricao||'').slice(0,35)}`),
-            datasets: [{ data: [...top10].reverse().map(p => p.unidades), backgroundColor: '#2563eb', borderRadius: 4 }]
-        },
-        options: {
-            indexAxis: 'y', responsive: true, maintainAspectRatio: true,
-            plugins: { legend: { display:false }, tooltip: { callbacks: { label: (item) => fmt(item.parsed.x) + ' un.' } } },
-            scales: { x: { beginAtZero:true, ticks:{ font:{size:11} } }, y: { ticks:{ font:{size:10} } } }
-        }
-    });
 
     const el = document.getElementById('tabelaVendasProdutos');
     if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; return; }
