@@ -76,11 +76,11 @@ tr:hover{background:#fafafa}
 <script src="pedidos-csv-service.js"></script>
 <script>
 const TABS = [
-    { id:'executivo', ico:'📊', label:'Dashboard Executivo', ativo:true },
-    { id:'plano', ico:'📋', label:'Plano Comercial', ativo:true },
-    { id:'contratos', ico:'📄', label:'Contratos', ativo:true },
-    { id:'pedidos', ico:'📦', label:'Pedidos', ativo:true },
-    { id:'faturamento', ico:'💵', label:'Faturamento', ativo:true },
+    { id:'executivo', ico:'📊', label:'Dashboard Executivo', ativo:false },
+    { id:'plano', ico:'📋', label:'Plano Comercial', ativo:false },
+    { id:'contratos', ico:'📄', label:'Contratos', ativo:false },
+    { id:'pedidos', ico:'📦', label:'Pedidos', ativo:false },
+    { id:'faturamento', ico:'💵', label:'Faturamento', ativo:false },
     { id:'estoque', ico:'🏭', label:'Estoque', ativo:false },
     { id:'importacoes', ico:'🚢', label:'Importações', ativo:false },
     { id:'produtos', ico:'🔧', label:'Produtos', ativo:true },
@@ -89,7 +89,7 @@ const TABS = [
     { id:'config', ico:'⚙️', label:'Configurações', ativo:false },
 ];
 
-let activeTab = 'executivo';
+let activeTab = 'produtos';
 let todosPedidos = [];
 let avisoValorInconsistente = [];
 let dadosFaturados = { itens:[], pedidos:[] };
@@ -109,6 +109,11 @@ function irPara(tabId){
     const tab = TABS.find(t => t.id === tabId);
     document.getElementById('pageTitle').textContent = tab.label;
     const root = document.getElementById('contentRoot');
+
+    if (!tab.ativo){
+        root.innerHTML = renderPlaceholder(tab.label);
+        return;
+    }
 
     if (tabId === 'executivo') root.innerHTML = renderExecutivo();
     else if (tabId === 'pedidos') root.innerHTML = renderPedidos();
@@ -1049,7 +1054,7 @@ function renderTabelaProdutosSKU(){
 
 async function init(){
     buildNav();
-    irPara('executivo');
+    irPara('produtos');
     try {
         const resultado = await carregarPedidos();
         todosPedidos = resultado.pedidos;
