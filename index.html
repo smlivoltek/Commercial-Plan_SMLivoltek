@@ -803,7 +803,7 @@ const NOMES_MES_VENDAS = ['January','February','March','April','May','June','Jul
 const ANOS_VENDAS_PRODUTOS = [2026, 2025, 2024]; // tenta cada ano; 404 é normal até o arquivo daquele ano existir
 
 async function carregarVendasProdutosDeUmAno(ano){
-    const buf = await fetch(`https://raw.githubusercontent.com/smlivoltek/Commercial-Plan_SMLivoltek/main/vendas_produtos_${ano}.csv`).then(r => {
+    const buf = await fetch(`https://raw.githubusercontent.com/smlivoltek/Commercial-Plan_SMLivoltek/main/vendas_produtos_${ano}.csv?v=${Date.now()}`, { cache: 'no-store' }).then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.arrayBuffer();
     });
@@ -836,7 +836,7 @@ async function carregarVendasProdutos(){
 function renderProdutos(){
     let secaoNova = '';
     if (vendasProdutosStatus === 'carregando') secaoNova = '<div class="loading">⏳ Loading vendas_produtos.csv...</div>';
-    else if (vendasProdutosStatus === 'erro') secaoNova = `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading vendas_produtos.csv: ${vendasProdutosErro}. Confirma se o arquivo está em data/vendas_produtos.csv no repositório.</div>`;
+    else if (vendasProdutosStatus === 'erro') secaoNova = `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading vendas_produtos_[ano].csv: ${vendasProdutosErro}. Confirma se o arquivo está na raiz do repositório (ex: vendas_produtos_2026.csv), com esse nome exato.</div>`;
     else secaoNova = `
     <div class="filters">
         <input type="text" id="prodBusca" placeholder="Search product code..." oninput="renderTabelaVendasProdutos()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:220px">
