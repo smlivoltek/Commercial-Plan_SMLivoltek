@@ -859,9 +859,11 @@ function renderProdutos(){
         <select id="prodMes" onchange="renderTabelaVendasProdutos()">
             <option value="">Month: All</option>
         </select>
+        <button onclick="limparFiltrosProdutos()" style="padding:8px 14px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;background:#fff;cursor:pointer;color:var(--texto-suave)">✕ Clear filters</button>
     </div>
     <div class="kpi-grid" id="prodKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
-    <div class="card"><h3>Products (selected filters)</h3><div id="tabelaVendasProdutos"></div></div>`;
+    <div class="card"><h3>Products (selected filters)</h3><div id="tabelaVendasProdutos"></div></div>
+    <div class="card"><h3>Seasonality — Units Sold by Month and Category</h3><p class="chart-subtitle" style="font-size:12px;color:var(--texto-suave);margin-bottom:12px">Always shows all months (ignores the Month filter above) so you can see the pattern across the year.</p><canvas id="chartSazonalidade" style="max-height:340px"></canvas></div>`;
 
     return `
     ${secaoNova}
@@ -869,6 +871,20 @@ function renderProdutos(){
     <p style="font-size:12px;color:var(--texto-suave);margin-bottom:14px">Legacy analysis below (Stock × Sales × Coverage) — depends on Faturados.csv, still pending.</p>
     <div class="kpi-grid" id="produtosKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
     <div class="card"><h3>Produtos — Estoque × Venda × Cobertura</h3><div id="tabelaProdutosSKU"></div></div>`;
+}
+
+function limparFiltrosProdutos(){
+    const busca = document.getElementById('prodBusca');
+    const ano = document.getElementById('prodAno');
+    const cat = document.getElementById('prodCategoria');
+    const arm = document.getElementById('prodArmazem');
+    const mes = document.getElementById('prodMes');
+    if (busca) busca.value = '';
+    if (ano) ano.value = '';
+    if (cat) cat.value = '';
+    if (arm) arm.value = '';
+    if (mes) mes.value = '';
+    renderTabelaVendasProdutos();
 }
 
 function popularFiltroAnoProdutos(){
@@ -905,8 +921,8 @@ function renderTabelaVendasProdutos(){
 
     const porProduto = {};
     filtrados.forEach(p => {
-        const k = p.codigo;
-        porProduto[k] = porProduto[k] || { codigo:p.codigo, descricao:p.descricao, categoria:p.categoria, unidades:0, valor:0, curitiba:0, fortaleza:0, manaus:0 };
+        const k = p.codigo + '|' + p.mes;
+        porProduto[k] = porProduto[k] || { codigo:p.codigo, descricao:p.descricao, categoria:p.categoria, mes:p.mes, unidades:0, valor:0, curitiba:0, fortaleza:0, manaus:0 };
         porProduto[k].unidades += p.unidades;
         porProduto[k].valor += p.valor;
         if (p.armazem === 'CURITIBA') porProduto[k].curitiba += p.unidades;
@@ -931,16 +947,57 @@ function renderTabelaVendasProdutos(){
         <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px">${armazemLider ? armazemLider[0] : '—'}</div></div>`;
 
     const el = document.getElementById('tabelaVendasProdutos');
-    if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; return; }
-    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Curitiba</th><th>Fortaleza</th><th>Manaus</th><th>Total Units</th><th>Value</th></tr>';
+    if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; renderChartSazonalidade(); return; }
+    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Month</th><th>Curitiba</th><th>Fortaleza</th><th>Manaus</th><th>Total Units</th><th>Value</th></tr>';
     lista.forEach(p => {
-        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${fmt(p.curitiba)}</td><td>${fmt(p.fortaleza)}</td><td>${fmt(p.manaus)}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
+        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${p.mes}</td><td>${fmt(p.curitiba)}</td><td>${fmt(p.fortaleza)}</td><td>${fmt(p.manaus)}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
     });
     html += '</table></div>';
     el.innerHTML = html;
+
+    renderChartSazonalidade();
 }
 
-let produtosCruzados = null;
+const ORDEM_MESES_VENDAS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function renderChartSazonalidade(){
+    const busca = (document.getElementById('prodBusca')?.value || '').toLowerCase().trim();
+    const ano = document.getElementById('prodAno')?.value || '';
+    const cat = document.getElementById('prodCategoria')?.value || '';
+    const arm = document.getElementById('prodArmazem')?.value || '';
+    // Propositalmente ignora o filtro de Mês — o gráfico é sobre o ano inteiro.
+    const base = dadosVendasProdutos.filter(p =>
+        (!busca || p.codigo.toLowerCase().includes(busca) || p.descricao.toLowerCase().includes(busca)) &&
+        (!ano || p.ano === Number(ano)) &&
+        (!cat || p.categoria === cat) &&
+        (!arm || p.armazem === arm)
+    );
+
+    const mesesPresentes = ORDEM_MESES_VENDAS.filter(m => base.some(p => p.mes === m));
+    const categorias = cat ? [cat] : ['Inversor','Carregador','Kit Solar','Outros'];
+    const cores = { 'Inversor':'#2563eb', 'Carregador':'#16a34a', 'Kit Solar':'#f59e0b', 'Outros':'#dc2626' };
+
+    const datasets = categorias.map(c => ({
+        label: c,
+        data: mesesPresentes.map(m => base.filter(p => p.categoria === c && p.mes === m).reduce((a,p)=>a+p.unidades,0)),
+        backgroundColor: cores[c] || '#6b7280',
+        borderRadius: 4
+    }));
+
+    if (window.chartSazonalidadeInstance) window.chartSazonalidadeInstance.destroy();
+    const ctxSaz = document.getElementById('chartSazonalidade');
+    if (!ctxSaz) return;
+    window.chartSazonalidadeInstance = new Chart(ctxSaz, {
+        type: 'bar',
+        data: { labels: mesesPresentes.map(m => m.slice(0,3)), datasets },
+        options: {
+            responsive: true, maintainAspectRatio: true,
+            plugins: { legend: { display: categorias.length > 1, position:'top' },
+                tooltip: { callbacks: { label:(item)=> `${item.dataset.label}: ${fmt(item.parsed.y)} un.` } } },
+            scales: { x: { stacked: categorias.length > 1 }, y: { stacked: categorias.length > 1, beginAtZero:true } }
+        }
+    });
+}
 
 async function renderizarProdutosAsync(){
     await calcularProdutosCruzados();
