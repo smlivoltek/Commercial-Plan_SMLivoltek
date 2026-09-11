@@ -943,10 +943,14 @@ function renderTabelaVendasProdutos(){
     filtrados.forEach(p => { porArmazem[p.armazem] = (porArmazem[p.armazem]||0) + p.unidades; });
     const armazemLider = Object.entries(porArmazem).sort((a,b)=>b[1]-a[1])[0];
 
+    const semFiltroNenhum = !busca && !ano && !cat && !arm && !mes;
+    const textoCategoriaLider = semFiltroNenhum ? '—' : (categoriaLider ? categoriaLider[0] : '—');
+    const textoArmazemLider = semFiltroNenhum ? '—' : (armazemLider ? armazemLider[0] : '—');
+
     document.getElementById('prodKpis').innerHTML = `
         <div class="kpi-card"><h4>Total Units</h4><div class="valor">${fmt(totalUnidades)}</div></div>
-        <div class="kpi-card laranja"><h4>Leading Category</h4><div class="valor" style="font-size:18px">${categoriaLider ? categoriaLider[0] : '—'}</div></div>
-        <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px">${armazemLider ? armazemLider[0] : '—'}</div></div>`;
+        <div class="kpi-card laranja"><h4>Leading Category</h4><div class="valor" style="font-size:18px;min-height:3.6em;line-height:1.2;display:flex;align-items:center">${textoCategoriaLider}</div></div>
+        <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px;min-height:3.6em;line-height:1.2;display:flex;align-items:center">${textoArmazemLider}</div></div>`;
 
     const el = document.getElementById('tabelaVendasProdutos');
     if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; renderChartSazonalidade(); return; }
