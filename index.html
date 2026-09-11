@@ -791,23 +791,140 @@ function renderContratos(){
     return html;
 }
 
+// ══════════════════════════════════════════════════════════════
+// PRODUTOS — Top produtos por Categoria/Armazém/Mês, a partir de
+// data/vendas_produtos.csv (gerado do relatório mensal consolidado).
+// ══════════════════════════════════════════════════════════════
+let dadosVendasProdutos = [];
+let vendasProdutosStatus = 'carregando';
+let vendasProdutosErro = '';
+const NOMES_MES_VENDAS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+async function carregarVendasProdutos(){
+    const buf = await fetch('https://raw.githubusercontent.com/smlivoltek/Commercial-Plan_SMLivoltek/main/data/vendas_produtos.csv').then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.arrayBuffer();
+    });
+    const texto = new TextDecoder('windows-1252').decode(buf);
+    const linhas = texto.trim().split('\n').slice(1);
+    return linhas.filter(l => l.trim()).map(l => {
+        const c = splitCSVLinhaSimples(l);
+        return {
+            codigo: (c[0]||'').trim(),
+            descricao: (c[1]||'').trim(),
+            categoria: (c[2]||'').trim(),
+            armazem: (c[3]||'').trim(),
+            mes: (c[4]||'').trim(),
+            pedido: (c[5]||'').trim(),
+            vendedor: (c[6]||'').trim(),
+            unidades: parseFloat(c[7]) || 0,
+            valor: parseFloat(c[8]) || 0
+        };
+    });
+}
+
 function renderProdutos(){
-    if (faturadosStatus === 'carregando') return '<div class="loading">⏳ Loading Faturados.csv...</div>';
-    if (faturadosStatus === 'erro') return `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading Faturados.csv: ${faturadosErro}</div>`;
-    if (dadosFaturados.itens.length === 0) return '<div class="empty">Faturados.csv loaded but has no valid rows.</div>';
-    return `
+    let secaoNova = '';
+    if (vendasProdutosStatus === 'carregando') secaoNova = '<div class="loading">⏳ Loading vendas_produtos.csv...</div>';
+    else if (vendasProdutosStatus === 'erro') secaoNova = `<div class="loading" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">⚠️ Error loading vendas_produtos.csv: ${vendasProdutosErro}. Confirma se o arquivo está em data/vendas_produtos.csv no repositório.</div>`;
+    else secaoNova = `
     <div class="filters">
-        <input type="text" id="filtroProdutoBusca" placeholder="Search code or product..." oninput="renderTabelaProdutosSKU()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;min-width:260px">
-        <select id="filtroProdutoStatus" onchange="renderTabelaProdutosSKU()">
-            <option value="">Status: All</option>
-            <option value="🔴">🔴 Ruptura</option>
-            <option value="🟡">🟡 Atenção</option>
-            <option value="🟢">🟢 OK</option>
-            <option value="⚪">⚪ Sem venda no período</option>
+        <select id="prodCategoria" onchange="renderTabelaVendasProdutos()">
+            <option value="">Category: All</option>
+            <option value="Inversor">Inversor</option>
+            <option value="Carregador">Carregador</option>
+            <option value="Kit Solar">Kit Solar</option>
+            <option value="Outros">Outros</option>
+        </select>
+        <select id="prodArmazem" onchange="renderTabelaVendasProdutos()">
+            <option value="">Warehouse: All</option>
+            <option value="CURITIBA">Curitiba</option>
+            <option value="FORTALEZA">Fortaleza</option>
+            <option value="MANAUS">Manaus</option>
+        </select>
+        <select id="prodMes" onchange="renderTabelaVendasProdutos()">
+            <option value="">Month: All</option>
         </select>
     </div>
+    <div class="kpi-grid" id="prodKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
+    <div class="card"><h3>Top 10 Products (selected filters)</h3><canvas id="chartProdTop10" style="max-height:340px"></canvas></div>
+    <div class="card"><h3>All Products (selected filters)</h3><div id="tabelaVendasProdutos"></div></div>`;
+
+    return `
+    ${secaoNova}
+    <hr style="margin:28px 0;border:none;border-top:1px solid var(--cinza-borda)">
+    <p style="font-size:12px;color:var(--texto-suave);margin-bottom:14px">Legacy analysis below (Stock × Sales × Coverage) — depends on Faturados.csv, still pending.</p>
     <div class="kpi-grid" id="produtosKpis"><div class="kpi-card"><h4>Loading</h4><div class="valor">...</div></div></div>
     <div class="card"><h3>Produtos — Estoque × Venda × Cobertura</h3><div id="tabelaProdutosSKU"></div></div>`;
+}
+
+function popularFiltroMesProdutos(){
+    const sel = document.getElementById('prodMes');
+    if (!sel || sel.options.length > 1) return;
+    const meses = [...new Set(dadosVendasProdutos.map(p=>p.mes).filter(Boolean))]
+        .sort((a,b) => NOMES_MES_VENDAS.indexOf(a) - NOMES_MES_VENDAS.indexOf(b));
+    meses.forEach(m => sel.innerHTML += `<option value="${m}">${m}</option>`);
+}
+
+function renderTabelaVendasProdutos(){
+    popularFiltroMesProdutos();
+    const cat = document.getElementById('prodCategoria')?.value || '';
+    const arm = document.getElementById('prodArmazem')?.value || '';
+    const mes = document.getElementById('prodMes')?.value || '';
+
+    const filtrados = dadosVendasProdutos.filter(p =>
+        (!cat || p.categoria === cat) &&
+        (!arm || p.armazem === arm) &&
+        (!mes || p.mes === mes)
+    );
+
+    const porProduto = {};
+    filtrados.forEach(p => {
+        const k = p.codigo;
+        porProduto[k] = porProduto[k] || { codigo:p.codigo, descricao:p.descricao, categoria:p.categoria, unidades:0, valor:0 };
+        porProduto[k].unidades += p.unidades;
+        porProduto[k].valor += p.valor;
+    });
+    const lista = Object.values(porProduto).sort((a,b) => b.unidades - a.unidades);
+
+    const totalUnidades = filtrados.reduce((a,p)=>a+p.unidades,0);
+    const totalValor = filtrados.reduce((a,p)=>a+p.valor,0);
+    const porCategoria = {};
+    filtrados.forEach(p => { porCategoria[p.categoria] = (porCategoria[p.categoria]||0) + p.unidades; });
+    const categoriaLider = Object.entries(porCategoria).sort((a,b)=>b[1]-a[1])[0];
+    const porArmazem = {};
+    filtrados.forEach(p => { porArmazem[p.armazem] = (porArmazem[p.armazem]||0) + p.unidades; });
+    const armazemLider = Object.entries(porArmazem).sort((a,b)=>b[1]-a[1])[0];
+
+    document.getElementById('prodKpis').innerHTML = `
+        <div class="kpi-card"><h4>Total Units</h4><div class="valor">${fmt(totalUnidades)}</div></div>
+        <div class="kpi-card verde"><h4>Total Value</h4><div class="valor">${fmtR$(totalValor)}</div></div>
+        <div class="kpi-card laranja"><h4>Leading Category</h4><div class="valor" style="font-size:18px">${categoriaLider ? categoriaLider[0] : '—'}</div></div>
+        <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px">${armazemLider ? armazemLider[0] : '—'}</div></div>`;
+
+    const top10 = lista.slice(0, 10);
+    if (window.chartProdTop10Instance) window.chartProdTop10Instance.destroy();
+    window.chartProdTop10Instance = new Chart(document.getElementById('chartProdTop10'), {
+        type: 'bar',
+        data: {
+            labels: [...top10].reverse().map(p => `${p.codigo} - ${(p.descricao||'').slice(0,35)}`),
+            datasets: [{ data: [...top10].reverse().map(p => p.unidades), backgroundColor: '#2563eb', borderRadius: 4 }]
+        },
+        options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: true,
+            plugins: { legend: { display:false }, tooltip: { callbacks: { label: (item) => fmt(item.parsed.x) + ' un.' } } },
+            scales: { x: { beginAtZero:true, ticks:{ font:{size:11} } }, y: { ticks:{ font:{size:10} } } }
+        }
+    });
+
+    const el = document.getElementById('tabelaVendasProdutos');
+    if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; return; }
+    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Units</th><th>Value</th></tr>';
+    lista.forEach(p => {
+        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
+    });
+    html += '</table></div>';
+    el.innerHTML = html;
 }
 
 let produtosCruzados = null;
@@ -875,6 +992,16 @@ async function init(){
             faturadosErro = e.message;
         }
 
+        try {
+            dadosVendasProdutos = await carregarVendasProdutos();
+            vendasProdutosStatus = 'ok';
+        } catch (e) {
+            console.warn('⚠ vendas_produtos.csv não encontrado ainda:', e.message);
+            dadosVendasProdutos = [];
+            vendasProdutosStatus = 'erro';
+            vendasProdutosErro = e.message;
+        }
+
         irPara(activeTab);
     } catch (err) {
         console.error(err);
@@ -895,6 +1022,7 @@ irPara = function(tabId){
     if (tabId === 'executivo' && todosPedidos.length) setTimeout(() => { desenharChartExecutivo(); renderDrillDiretoriaVendedor(); }, 50);
     if (tabId === 'faturamento' && todosPedidos.length) setTimeout(renderTabelaFaturamento, 50);
     if (tabId === 'plano' && todosPedidos.length) setTimeout(renderizarPlanoAsync, 50);
+    if (tabId === 'produtos' && vendasProdutosStatus === 'ok') setTimeout(renderTabelaVendasProdutos, 50);
     if (tabId === 'produtos' && dadosFaturados.itens.length) setTimeout(renderizarProdutosAsync, 50);
 };
 
