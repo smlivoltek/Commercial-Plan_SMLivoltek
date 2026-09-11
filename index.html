@@ -906,9 +906,12 @@ function renderTabelaVendasProdutos(){
     const porProduto = {};
     filtrados.forEach(p => {
         const k = p.codigo;
-        porProduto[k] = porProduto[k] || { codigo:p.codigo, descricao:p.descricao, categoria:p.categoria, unidades:0, valor:0 };
+        porProduto[k] = porProduto[k] || { codigo:p.codigo, descricao:p.descricao, categoria:p.categoria, unidades:0, valor:0, curitiba:0, fortaleza:0, manaus:0 };
         porProduto[k].unidades += p.unidades;
         porProduto[k].valor += p.valor;
+        if (p.armazem === 'CURITIBA') porProduto[k].curitiba += p.unidades;
+        else if (p.armazem === 'FORTALEZA') porProduto[k].fortaleza += p.unidades;
+        else if (p.armazem === 'MANAUS') porProduto[k].manaus += p.unidades;
     });
     const lista = Object.values(porProduto).sort((a,b) => b.unidades - a.unidades);
 
@@ -929,9 +932,9 @@ function renderTabelaVendasProdutos(){
 
     const el = document.getElementById('tabelaVendasProdutos');
     if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; return; }
-    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Units</th><th>Value</th></tr>';
+    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Curitiba</th><th>Fortaleza</th><th>Manaus</th><th>Total Units</th><th>Value</th></tr>';
     lista.forEach(p => {
-        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
+        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${fmt(p.curitiba)}</td><td>${fmt(p.fortaleza)}</td><td>${fmt(p.manaus)}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
     });
     html += '</table></div>';
     el.innerHTML = html;
