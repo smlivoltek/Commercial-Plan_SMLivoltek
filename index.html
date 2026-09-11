@@ -929,7 +929,10 @@ function renderTabelaVendasProdutos(){
         else if (p.armazem === 'FORTALEZA') porProduto[k].fortaleza += p.unidades;
         else if (p.armazem === 'MANAUS') porProduto[k].manaus += p.unidades;
     });
-    const lista = Object.values(porProduto).sort((a,b) => b.unidades - a.unidades);
+    const lista = Object.values(porProduto).sort((a,b) => {
+        if (a.codigo !== b.codigo) return a.codigo.localeCompare(b.codigo);
+        return ORDEM_MESES_VENDAS.indexOf(a.mes) - ORDEM_MESES_VENDAS.indexOf(b.mes);
+    });
 
     const totalUnidades = filtrados.reduce((a,p)=>a+p.unidades,0);
     const totalValor = filtrados.reduce((a,p)=>a+p.valor,0);
@@ -942,15 +945,14 @@ function renderTabelaVendasProdutos(){
 
     document.getElementById('prodKpis').innerHTML = `
         <div class="kpi-card"><h4>Total Units</h4><div class="valor">${fmt(totalUnidades)}</div></div>
-        <div class="kpi-card verde"><h4>Total Value</h4><div class="valor">${fmtR$(totalValor)}</div></div>
         <div class="kpi-card laranja"><h4>Leading Category</h4><div class="valor" style="font-size:18px">${categoriaLider ? categoriaLider[0] : '—'}</div></div>
         <div class="kpi-card"><h4>Leading Warehouse</h4><div class="valor" style="font-size:18px">${armazemLider ? armazemLider[0] : '—'}</div></div>`;
 
     const el = document.getElementById('tabelaVendasProdutos');
     if (lista.length === 0){ el.innerHTML = '<div class="empty">No products match this filter.</div>'; renderChartSazonalidade(); return; }
-    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Month</th><th>Curitiba</th><th>Fortaleza</th><th>Manaus</th><th>Total Units</th><th>Value</th></tr>';
+    let html = '<div class="table-wrap"><table><tr><th>Code</th><th>Product</th><th>Category</th><th>Month</th><th>Curitiba</th><th>Fortaleza</th><th>Manaus</th><th>Total Units</th></tr>';
     lista.forEach(p => {
-        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${p.mes}</td><td>${fmt(p.curitiba)}</td><td>${fmt(p.fortaleza)}</td><td>${fmt(p.manaus)}</td><td>${fmt(p.unidades)}</td><td>${fmtR$(p.valor)}</td></tr>`;
+        html += `<tr><td><strong>${p.codigo}</strong></td><td style="max-width:320px">${p.descricao}</td><td>${p.categoria}</td><td>${p.mes}</td><td>${fmt(p.curitiba)}</td><td>${fmt(p.fortaleza)}</td><td>${fmt(p.manaus)}</td><td>${fmt(p.unidades)}</td></tr>`;
     });
     html += '</table></div>';
     el.innerHTML = html;
